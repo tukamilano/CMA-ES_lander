@@ -27,6 +27,48 @@ class Board():
             return False, None
         
     def score(self):
+        '''
+                // Score is used to order landers by performance
+        calculateScore: function(level, hitLandingArea) {
+            var currentSpeed = Math.sqrt(Math.pow(this.xspeed, 2) + Math.pow(this.yspeed, 2));
+
+            // 0-100: crashed somewhere, calculate score by distance to landing area
+            if (!hitLandingArea) {
+
+                var lastX = this.points[this.points.length-2][0];
+                var lastY = this.points[this.points.length-2][1];
+                var distance = level.getDistanceToLandingArea(lastX, lastY);
+
+                // Calculate score from distance
+                this.score = 100 - (100 * distance / level.max_dist);
+
+                // High speeds are bad, they decrease maneuvrability
+                var speedPen = 0.1 * Math.max(currentSpeed - 100, 0);
+                this.score -= speedPen;
+            }
+
+            // 100-200: crashed into landing area, calculate score by speed above safety
+            else if (this.yspeed < -40 || 20 < Math.abs(this.xspeed)) {
+                var xPen = 0;
+                if (20 < Math.abs(this.xspeed)) {
+                    xPen = (Math.abs(this.xspeed) - 20) / 2
+                }
+                var yPen = 0
+                if (this.yspeed < -40) {
+                    yPen = (-40 - this.yspeed) / 2
+                }
+                this.score = 200 - xPen - yPen
+                return;
+            }
+
+            // 200-300: landed safely, calculate score by fuel remaining
+            else {
+                this.score = 200 + (100 * this.fuel / this.initFuel)
+            }
+
+            // Set color according to score
+            this.setColor(Helper.rainbow(300 + 300, this.score))
+        '''
         pass
     
     def update(self, accelerate_power, accelerate_angle):
