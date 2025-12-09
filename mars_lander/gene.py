@@ -34,7 +34,3 @@ def action(input, gene):
     first = softmax_choice(output[:3])
     second = softmax_choice(output[3:6])
     return np.array([first, second])
-
-
-x = generate_init_gene(10)
-print(x)

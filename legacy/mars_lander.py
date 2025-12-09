@@ -15,22 +15,27 @@ class Board():
     
     def is_terminate(self):
         if self.lander_pos[1] <= self.ground_height_list[self.lander_pos[0]]: #着地
-            if (self.ground_pair[0] <= self.lander_pos[0]) and (self.lander_pos[0] <= self.ground_pair[1]):
-                return True, 'success'
+            if (self.flat_ground_pair[0] <= self.lander_pos[0]) and (self.lander_pos[0] <= self.flat_ground_pair[1]):
+                return True, self.score(self)
             else:
-                return True, 'false'
+                return True, self.score(self)
         elif (20 < abs(self.lander_speed[0])) or (40 < abs(self.lander_speed[1])):
-            return True, 'false'
+            return True, self.score(self)
         elif (self.lander_pos[0] < 0) or (self.width <= self.lander_pos[0]) or (self.height <= self.lander_pos[1]):
-            return True, 'false'
+            return True, self.score(self)
         else:
             return False, None
+        
+    def score(self):
+        pass
     
     def update(self, accelerate_power, accelerate_angle):
         A = self.gravity * accelerate_power / 4
-        accelerate = (-A * math.sin(accelerate_angle), A * math.cos(accelerate_angle) - self.gravity)
+        accelerate = (-A * math.sin(math.radians(accelerate_angle)), A * math.cos(math.radians(accelerate_angle)) - self.gravity)
         self.lander_pos[0] += int(self.lander_speed[0] + (accelerate[0] / 2))
         self.lander_pos[1] += int(self.lander_speed[1] + (accelerate[1] / 2))
+        self.lander_speed[0] += int(accelerate[0])
+        self.lander_speed[1] += int(accelerate[1])
 
             
 surfaceN = int(input())
