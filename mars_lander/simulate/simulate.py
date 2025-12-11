@@ -1,12 +1,18 @@
+import argparse
 import math
 import sys
 from pathlib import Path
 from typing import List, Tuple
 
+import numpy as np
+
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
+
+
+CASE_DIR = Path(__file__).resolve().parent
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -328,57 +334,103 @@ def _read_initial_state():
         raise ValueError("Expected 7 integers for lander state")
     return values
 
-'''
-def main():
-    surface_points = _read_surface_points()
-    ground_heights, landing_segment = _build_ground(surface_points)
-    X, Y, h_speed, v_speed, fuel, rotate, power = _read_initial_state()
+def _load_case_file(path: Path):
+    with path.open("r", encoding="ascii") as f:
+        lines = [line.strip() for line in f if line.strip()]
 
-    board = Board(
-        ground_height_list=ground_heights,
-        lander_pos=[X, Y],
+    iterator = iter(lines)
+    surface_count = int(next(iterator))
+    points = [tuple(map(int, next(iterator).split())) for _ in range(surface_count)]
+    heights, landing_segment = _build_ground(points)
+    x, y, h_speed, v_speed, fuel, rotate, power = map(int, next(iterator).split())
+    initial_state = (x, y, h_speed, v_speed, fuel, rotate, power)
+    return heights, landing_segment, initial_state
+
+
+def _create_board_from_case(case_name: str) -> Board:
+    case_path = CASE_DIR / f"{case_name}.txt"
+    if not case_path.exists():
+        available = sorted(p.stem for p in CASE_DIR.glob("case*.txt"))
+        message = f"case '{case_name}' not found. available cases: {', '.join(available)}"
+        raise FileNotFoundError(message)
+
+    ground_height_list, flat_ground_pair, initial = _load_case_file(case_path)
+    x, y, h_speed, v_speed, fuel, rotate, power = initial
+    return Board(
+        ground_height_list=list(ground_height_list),
+        lander_pos=[x, y],
         lander_speed=[h_speed, v_speed],
-        flat_ground_pair=landing_segment,
+        flat_ground_pair=flat_ground_pair,
         init_rotate=rotate,
         init_power=power,
         init_fuel=fuel,
     )
 
-    import numpy as np
-    from parameter import gene_num, input_size
-    from gene import action
 
-    rng = np.random.default_rng()
-    gene = rng.normal(size=gene_num)
+def simulate_case(case_name: str, gene: np.ndarray, step_limit: int = 1500, verbose: bool = True):
+    from gene import action  # local import avoids circular dependency during module load
+    from parameter import input_size
 
-    step_limit = 1500
+    board = _create_board_from_case(case_name)
+
     for step in range(step_limit):
         terminated, score = board.is_terminate()
         if terminated:
-            print(f"terminated at step {step}: score={score:.2f}")
-            break
+            if verbose:
+                print(f"terminated at step {step}: score={score:.2f}")
+            return score, step
 
         features = board.sensor()
-        assert len(features) == input_size
+        if len(features) != input_size:
+            raise ValueError(f"expected {input_size} features, got {len(features)}")
+
         angle_norm, power_norm = action(features, gene)
 
-        target_angle = _clamp(angle_norm, -1.0, 1.0) * 90
-        target_angle = round(target_angle / 15.0) * 15.0
-        target_angle = _clamp(target_angle, -90.0, 90.0)
+        clamped_angle = max(-1.0, min(1.0, angle_norm))
+        target_angle = round((clamped_angle * 90.0) / 15.0) * 15.0
+        target_angle = max(-90.0, min(90.0, target_angle))
 
-        target_power = round(_clamp(power_norm, 0.0, 1.0) * 4.0)
+        clamped_power = max(0.0, min(1.0, power_norm))
+        target_power = int(round(clamped_power * 4.0))
 
-        print(
-            f"step {step:03d} | pos=({board.lander_pos[0]:7.2f}, {board.lander_pos[1]:7.2f}) "
-            f"speed=({board.lander_speed[0]:6.2f}, {board.lander_speed[1]:6.2f}) "
-            f"target=(P {target_power:.0f}, ang {target_angle:+.0f})"
-        )
+        if verbose:
+            print(
+                f"step {step:03d} | pos=({board.lander_pos[0]:7.2f}, {board.lander_pos[1]:7.2f}) "
+                f"speed=({board.lander_speed[0]:6.2f}, {board.lander_speed[1]:6.2f}) "
+                f"target=(P {target_power}, ang {target_angle:+.0f})"
+            )
 
         board.update(target_power, target_angle)
-    else:
+
+    if verbose:
         print("terminated: step limit reached without landing")
+    return None, step_limit
+
+
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Simulate lander behavior for a single case")
+    parser.add_argument("--case", default="case1", help="case name without extension (default: case1)")
+    parser.add_argument("--gene-file", type=Path, help="path to .npy file containing a gene vector")
+    parser.add_argument("--seed", type=int, help="random seed when no gene file is provided")
+    parser.add_argument("--steps", type=int, default=1500, help="maximum number of simulation steps")
+    parser.add_argument("--quiet", action="store_true", help="suppress per-step logs")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    from parameter import gene_num
+
+    args = _parse_args(argv)
+    if args.gene_file:
+        if not args.gene_file.exists():
+            raise FileNotFoundError(f"gene file not found: {args.gene_file}")
+        gene = np.load(args.gene_file).astype(float)
+    else:
+        rng = np.random.default_rng(args.seed)
+        gene = rng.normal(size=gene_num)
+
+    simulate_case(args.case, gene, step_limit=args.steps, verbose=not args.quiet)
 
 
 if __name__ == "__main__":
     main()
-'''
