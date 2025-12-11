@@ -23,9 +23,10 @@ def action(inputs, gene):
 
     x = np.asarray(inputs, dtype=float)
     hidden = x @ w1 + b1
+    hidden = np.tanh(hidden)
     output = hidden @ w2 + b2
 
     angle_norm = np.tanh(output[0])
-    power_norm = _sigmoid(output[1])
+    power_norm = 2 * np.tanh(output[1]) - 1
 
     return np.array([angle_norm, power_norm])
