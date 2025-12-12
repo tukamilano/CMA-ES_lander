@@ -23,11 +23,11 @@ class Board():
     '''
     物理システムと終了条件の記述
     '''
-    def __init__(self, ground_height_list, lander_pos, lander_speed, flat_ground_pair, init_rotate, init_power, init_fuel):
+    def __init__(self, surface_points, lander_pos, lander_speed, flat_ground_pair, init_rotate, init_power, init_fuel):
         self.width = 7000
         self.height = 3000
         self.gravity = 3.711
-        self.ground_height_list = ground_height_list
+        self.surface_points = surface_points
         self.lander_pos = [float(lander_pos[0]), float(lander_pos[1])]
         self.lander_speed = [float(lander_speed[0]), float(lander_speed[1])]
         self.flat_ground_pair = flat_ground_pair
@@ -51,20 +51,18 @@ class Board():
                 vertical_speed=vertical_speed,
             )
 
-        ground_index = int(round(x))
-        if 0 <= ground_index < len(self.ground_height_list):
-            ground_height = self.ground_height_list[ground_index]
-            if y <= ground_height:  # 着地
-                hit_landing_area = self._landing_x_min <= x <= self._landing_x_max
-                safe_speed = abs(horizontal_speed) <= 20 and abs(vertical_speed) <= 40
-                upright = self.rotate == 0
-                success = hit_landing_area and safe_speed and upright
-                return True, self.score(
-                    hit_landing_area=hit_landing_area,
-                    success=success,
-                    horizontal_speed=horizontal_speed,
-                    vertical_speed=vertical_speed,
-                )
+        ground_height = self._ground_height_at(x)
+        if y <= ground_height:  # 着地
+            hit_landing_area = self._landing_x_min <= x <= self._landing_x_max
+            safe_speed = abs(horizontal_speed) <= 20 and abs(vertical_speed) <= 40
+            upright = self.rotate == 0
+            success = hit_landing_area and safe_speed and upright
+            return True, self.score(
+                hit_landing_area=hit_landing_area,
+                success=success,
+                horizontal_speed=horizontal_speed,
+                vertical_speed=vertical_speed,
+            )
 
         return False, None
         
@@ -124,8 +122,8 @@ class Board():
         return max_distance if max_distance else 1
     
     def update(self, desired_power, desired_angle):
-        desired_power = _clamp(desired_power, 0, 4)
-        desired_angle = _clamp(desired_angle, -90, 90)
+        desired_power = int(round(_clamp(desired_power, 0, 4)))
+        desired_angle = int(round(_clamp(desired_angle, -90, 90)))
 
         power_delta = _clamp(desired_power - self.power, -1, 1)
         angle_delta = _clamp(desired_angle - self.rotate, -15, 15)
@@ -136,10 +134,7 @@ class Board():
         if self.fuel <= 0:
             self.power = 0
 
-        thrust = min(self.power, self.fuel)
-        self.fuel = max(self.fuel - thrust, 0)
-        if self.power > thrust:
-            self.power = thrust
+        thrust = self.power
 
         acc_x = -thrust * math.sin(math.radians(self.rotate))
         acc_y = thrust * math.cos(math.radians(self.rotate)) - self.gravity
@@ -149,6 +144,8 @@ class Board():
 
         self.lander_speed[0] += acc_x
         self.lander_speed[1] += acc_y
+
+        self.fuel = max(self.fuel - thrust, 0)
 
     def sensor(self, normalize: bool = True):
         '''
@@ -233,16 +230,18 @@ class Board():
 
     def _ground_height_at(self, x):
         if x <= 0:
-            return self.ground_height_list[0]
-        if x >= len(self.ground_height_list) - 1:
-            return self.ground_height_list[-1]
+            return self.surface_points[0][1]
+        if x >= self.surface_points[-1][0]:
+            return self.surface_points[-1][1]
 
-        left_index = int(math.floor(x))
-        right_index = min(left_index + 1, len(self.ground_height_list) - 1)
-        fraction = x - left_index
-        left_height = self.ground_height_list[left_index]
-        right_height = self.ground_height_list[right_index]
-        return left_height * (1 - fraction) + right_height * fraction
+        for (x1, y1), (x2, y2) in zip(self.surface_points, self.surface_points[1:]):
+            if x1 == x2:
+                continue
+            if x1 <= x <= x2 or x2 <= x <= x1:
+                t = (x - x1) / (x2 - x1)
+                return y1 + t * (y2 - y1)
+
+        return self.surface_points[-1][1]
 
     def _is_below_ground(self, x, y):
         if not (0 <= x < self.width):
@@ -315,8 +314,7 @@ def _read_surface_points() -> List[Tuple[int, int]]:
     return points
 
 
-def _build_ground(points: List[Tuple[int, int]]) -> Tuple[List[int], Tuple[Tuple[int, int], Tuple[int, int]]]:
-    heights = [0] * 7000
+def _build_ground(points: List[Tuple[int, int]]) -> Tuple[List[Tuple[int, int]], Tuple[Tuple[int, int], Tuple[int, int]]]:
     landing_segment = None
 
     for (x1, y1), (x2, y2) in zip(points, points[1:]):
@@ -326,15 +324,11 @@ def _build_ground(points: List[Tuple[int, int]]) -> Tuple[List[int], Tuple[Tuple
             continue
         if dy == 0:
             landing_segment = ((x1, y1), (x2, y2))
-        for x in range(x1, x2 + 1):
-            t = (x - x1) / dx
-            y = y1 + t * dy
-            heights[x] = int(round(y))
 
     if landing_segment is None:
         raise ValueError("Flat landing segment not found in surface definition")
 
-    return heights, landing_segment
+    return points, landing_segment
 
 
 def _read_initial_state():
@@ -356,10 +350,10 @@ def _load_case_file(path: Path):
     iterator = iter(lines)
     surface_count = int(next(iterator))
     points = [tuple(map(int, next(iterator).split())) for _ in range(surface_count)]
-    heights, landing_segment = _build_ground(points)
+    surface_points, landing_segment = _build_ground(points)
     x, y, h_speed, v_speed, fuel, rotate, power = map(int, next(iterator).split())
     initial_state = (x, y, h_speed, v_speed, fuel, rotate, power)
-    return heights, landing_segment, initial_state
+    return surface_points, landing_segment, initial_state
 
 
 def _create_board_from_case(case_name: str) -> Board:
@@ -369,10 +363,10 @@ def _create_board_from_case(case_name: str) -> Board:
         message = f"case '{case_name}' not found. available cases: {', '.join(available)}"
         raise FileNotFoundError(message)
 
-    ground_height_list, flat_ground_pair, initial = _load_case_file(case_path)
+    surface_points, flat_ground_pair, initial = _load_case_file(case_path)
     x, y, h_speed, v_speed, fuel, rotate, power = initial
     return Board(
-        ground_height_list=list(ground_height_list),
+        surface_points=list(surface_points),
         lander_pos=[x, y],
         lander_speed=[h_speed, v_speed],
         flat_ground_pair=flat_ground_pair,
@@ -402,8 +396,7 @@ def simulate_case(case_name: str, gene: np.ndarray, step_limit: int = 1500, verb
         angle_norm, power_norm = action(features, gene)
 
         clamped_angle = max(-1.0, min(1.0, angle_norm))
-        target_angle = round((clamped_angle * 90.0) / 15.0) * 15.0
-        target_angle = max(-90.0, min(90.0, target_angle))
+        target_angle = max(-90.0, min(90.0, clamped_angle * 90.0))
 
         clamped_power = max(0.0, min(1.0, power_norm))
         target_power = int(round(clamped_power * 4.0))
