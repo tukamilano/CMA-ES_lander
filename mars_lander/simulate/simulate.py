@@ -1,4 +1,5 @@
 import argparse
+import json
 import math
 import sys
 from pathlib import Path
@@ -43,22 +44,31 @@ class Board():
         horizontal_speed, vertical_speed = self.lander_speed
 
         if (x < 0) or (self.width <= x) or (y < 0) or (self.height <= y):
-            return True, self.score(hit_landing_area=False)
+            return True, self.score(
+                hit_landing_area=False,
+                success=False,
+                horizontal_speed=horizontal_speed,
+                vertical_speed=vertical_speed,
+            )
 
         ground_index = int(round(x))
         if 0 <= ground_index < len(self.ground_height_list):
             ground_height = self.ground_height_list[ground_index]
             if y <= ground_height:  # 着地
                 hit_landing_area = self._landing_x_min <= x <= self._landing_x_max
-                return True, self.score(hit_landing_area=hit_landing_area)
-
-        if abs(horizontal_speed) > 20 or abs(vertical_speed) > 40:
-            return True, self.score(hit_landing_area=False)
+                safe_speed = abs(horizontal_speed) <= 20 and abs(vertical_speed) <= 40
+                upright = self.rotate == 0
+                success = hit_landing_area and safe_speed and upright
+                return True, self.score(
+                    hit_landing_area=hit_landing_area,
+                    success=success,
+                    horizontal_speed=horizontal_speed,
+                    vertical_speed=vertical_speed,
+                )
 
         return False, None
         
-    def score(self, hit_landing_area):
-        horizontal_speed, vertical_speed = self.lander_speed
+    def score(self, hit_landing_area, success, horizontal_speed, vertical_speed):
         current_speed = math.hypot(horizontal_speed, vertical_speed)
 
         if not hit_landing_area:
@@ -67,16 +77,21 @@ class Board():
             speed_penalty = 0.1 * max(current_speed - 100, 0)
             return score - speed_penalty
 
-        if vertical_speed < -40 or abs(horizontal_speed) > 20:
-            x_penalty = 0
+        if not success:
+            x_penalty = 0.0
             if abs(horizontal_speed) > 20:
                 x_penalty = (abs(horizontal_speed) - 20) / 2
 
-            y_penalty = 0
-            if vertical_speed < -40:
-                y_penalty = (-40 - vertical_speed) / 2
+            y_penalty = 0.0
+            if abs(vertical_speed) > 40:
+                if vertical_speed < -40:
+                    y_penalty = (-40 - vertical_speed) / 2
+                else:
+                    y_penalty = (vertical_speed - 40) / 2
 
-            return 200 - x_penalty - y_penalty
+            rotate_penalty = abs(self.rotate) * 0.5
+
+            return 200 - x_penalty - y_penalty - rotate_penalty
 
         fuel_bonus = 0
         if self.init_fuel:
@@ -410,24 +425,50 @@ def simulate_case(case_name: str, gene: np.ndarray, step_limit: int = 1500, verb
 def _parse_args(argv=None):
     parser = argparse.ArgumentParser(description="Simulate lander behavior for a single case")
     parser.add_argument("--case", default="case1", help="case name without extension (default: case1)")
-    parser.add_argument("--gene-file", type=Path, help="path to .npy file containing a gene vector")
-    parser.add_argument("--seed", type=int, help="random seed when no gene file is provided")
+    parser.add_argument(
+        "--gene-file",
+        type=Path,
+        help="path to .npy file containing a gene vector (default: best_gene.npy if present)",
+    )
+    parser.add_argument("--seed", type=int, help="random seed when no gene file is available")
     parser.add_argument("--steps", type=int, default=1500, help="maximum number of simulation steps")
     parser.add_argument("--quiet", action="store_true", help="suppress per-step logs")
     return parser.parse_args(argv)
+
+
+def _default_gene_path(case_name: str) -> Path:
+    root = Path(__file__).resolve().parent.parent
+    if case_name.startswith("case"):
+        suffix = case_name[len("case") :]
+        suffix = suffix or case_name
+        return root / f"best_gene{suffix}.json"
+    return root / f"best_gene_{case_name}.json"
 
 
 def main(argv=None):
     from parameter import gene_num
 
     args = _parse_args(argv)
+    default_gene_path = _default_gene_path(args.case)
+
+    gene_path: Path | None = None
     if args.gene_file:
-        if not args.gene_file.exists():
-            raise FileNotFoundError(f"gene file not found: {args.gene_file}")
-        gene = np.load(args.gene_file).astype(float)
+        gene_path = args.gene_file
+    elif default_gene_path.exists():
+        gene_path = default_gene_path
+
+    if gene_path is not None:
+        if not gene_path.exists():
+            raise FileNotFoundError(f"gene file not found: {gene_path}")
+        data = json.loads(gene_path.read_text(encoding="ascii"))
+        gene = np.asarray(data, dtype=float)
+        if not args.quiet and gene_path != args.gene_file:
+            print(f"loaded gene from {gene_path.name}")
     else:
         rng = np.random.default_rng(args.seed)
         gene = rng.normal(size=gene_num)
+        if not args.quiet:
+            print("no gene file found; simulating with a random gene")
 
     simulate_case(args.case, gene, step_limit=args.steps, verbose=not args.quiet)
 
