@@ -304,17 +304,6 @@ class Board():
         positive_distances = [d for d in distances if d > 0]
         return min(positive_distances) if positive_distances else 0
 
-def _read_surface_points() -> List[Tuple[int, int]]:
-    count = int(input())
-    points = []
-    for _ in range(count):
-        x, y = map(int, input().split())
-        points.append((x, y))
-    if len(points) < 2:
-        raise ValueError("Surface definition requires at least two points")
-    return points
-
-
 def _build_ground(points: List[Tuple[int, int]]) -> Tuple[List[int], Tuple[Tuple[int, int], Tuple[int, int]]]:
     heights = [0] * 7000
     landing_segment = None
@@ -335,19 +324,6 @@ def _build_ground(points: List[Tuple[int, int]]) -> Tuple[List[int], Tuple[Tuple
         raise ValueError("Flat landing segment not found in surface definition")
 
     return heights, landing_segment
-
-
-def _read_initial_state():
-    line = ""
-    while line == "":
-        try:
-            line = input()
-        except EOFError as exc:
-            raise ValueError("Missing initial lander state line") from exc
-    values = list(map(int, line.split()))
-    if len(values) != 7:
-        raise ValueError("Expected 7 integers for lander state")
-    return values
 
 def _load_case_file(path: Path):
     with path.open("r", encoding="ascii") as f:

@@ -1,3 +1,5 @@
+import argparse
+import json
 import numpy as np
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
@@ -23,12 +25,17 @@ def _load_case(path: Path):
     x, y, h_speed, v_speed, fuel, rotate, power = map(int, next(iterator).split())
     return ground_height_list, flat_ground_pair, (x, y, h_speed, v_speed, fuel, rotate, power)
 
-
-CASE_DATA = [
-    _load_case(CASE_DIR / f"case{i}.txt")
+CASE_DATA_MAP = {
+    f"case{i}": _load_case(CASE_DIR / f"case{i}.txt")
     for i in range(1, 6)
-]
+}
 
+_ACTIVE_CASE_NAME: str = "case1"
+
+
+def _init_worker(case_name: str):
+    global _ACTIVE_CASE_NAME
+    _ACTIVE_CASE_NAME = case_name
 
 def _create_board(case_data):
     ground_height_list, flat_ground_pair, initial = case_data
@@ -64,42 +71,94 @@ def simulation(gene, board: Board):
 
 def evaluate(gene):
     total_score = 0.0
-    success_count = 0
-    for case_data in CASE_DATA:
-        board = _create_board(case_data)
-        score = simulation(gene, board)
-        if score >= 200.0:
-            success_count += 1
-        total_score += score
+    case_data = CASE_DATA_MAP[_ACTIVE_CASE_NAME]
+    board = _create_board(case_data)
+    score = simulation(gene, board)
+    success = float(score >= 200.0)
+    total_score += score
 
-    success_rate = success_count / 5.0
-    return -total_score, success_rate
+    return -total_score, success
 
 
+def _best_gene_filename(case_name: str) -> str:
+    if not case_name:
+        return "best_gene.npy"
+    if case_name.startswith("case"):
+        suffix = case_name[len("case") :]
+        suffix = suffix or case_name
+        return f"best_gene{suffix}.npy"
+    return f"best_gene_{case_name}.npy"
 
-def run_optimization(max_workers: int | None = None):
+
+def run_optimization(case_name: str, max_workers: int | None = None):
     optimizer = CMA(mean=np.zeros(gene_num), sigma=0.5)
+    base_path = Path(__file__).resolve().parent / _best_gene_filename(case_name)
+    best_gene_path = base_path.with_suffix(".json")
+    best_overall_score = -np.inf
+    best_overall_success_rate = 0.0
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    _init_worker(case_name)
+
+    with ProcessPoolExecutor(max_workers=max_workers, initializer=_init_worker, initargs=(case_name,)) as executor:
         for generation in range(max_generation):
             genes = [optimizer.ask() for _ in range(optimizer.population_size)]
             results = list(executor.map(evaluate, genes))
 
-            solutions = [(gene, loss) for gene, (loss, _) in zip(genes, results)]
+            losses = np.fromiter((loss for loss, _ in results), dtype=float, count=len(results))
+            success_rates = np.fromiter((sr for _, sr in results), dtype=float, count=len(results))
+
+            solutions = [(gene, float(loss)) for gene, loss in zip(genes, losses, strict=True)]
             optimizer.tell(solutions)
 
-            losses = np.array([loss for loss, _ in results], dtype=float)
             scores = -losses
-            best_score = scores.max()
-            mean_score = scores.mean()
-            best_success_rate = max(success_rate for _, success_rate in results)
+            best_idx = int(np.argmax(scores))
+            best_score = float(scores[best_idx])
+            mean_score = float(scores.mean())
+            best_success_rate = float(success_rates.max())
+            current_best_gene = genes[best_idx]
+            current_best_success_rate = float(success_rates[best_idx])
+
+            if best_score > best_overall_score:
+                best_overall_score = float(best_score)
+                best_overall_success_rate = float(current_best_success_rate)
+                best_gene_path.write_text(
+                    json.dumps(current_best_gene.tolist()),
+                    encoding="ascii",
+                )
+                print(
+                    f"    new best saved: score={best_overall_score:.2f}, success_rate={best_overall_success_rate:.2f} -> {best_gene_path.name}"
+                )
             print(
                 f"generation {generation:03d}: best_score={best_score:.2f}, mean_score={mean_score:.2f}, "
                 f"best_success_rate={best_success_rate:.2f}"
             )
 
 
+def _parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Train CMA-ES controller on a specific Mars Lander case")
+    parser.set_defaults(case="case1")
+
+    case_group = parser.add_mutually_exclusive_group()
+    case_group.add_argument("--case", choices=sorted(CASE_DATA_MAP.keys()), help="case name (default: case1)")
+    for name in CASE_DATA_MAP:
+        case_group.add_argument(
+            f"--{name}",
+            dest="case",
+            action="store_const",
+            const=name,
+            help=f"shortcut for --case {name}",
+        )
+
+    parser.add_argument("--max-workers", type=int, help="number of worker processes (default: use CPU count)")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = _parse_args(argv)
+    run_optimization(args.case, max_workers=args.max_workers)
+
+
 if __name__ == "__main__":
-    run_optimization()
+    main()
     
 
